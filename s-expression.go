@@ -63,7 +63,12 @@ func (exp sexp) evaluate(ps Params) (interface{}, error) {
 		}
 		return params, nil
 	}
-
+	if _, ok := exp.i.([]float64); ok {
+		return exp.i, nil
+	}
+	if _, ok := exp.i.([]string); ok {
+		return exp.i, nil
+	}
 	if val, ok := exp.i.(varString); ok {
 		s := string(val)
 		if fn, err := function.Get(s); err == nil {
@@ -111,14 +116,35 @@ ss:
 				tokens.Remove(e)
 				if v, ok := e.Value.(byte); ok && v == '(' {
 					exps := make(list, 0, ins.Len())
+					var constF, constS int
 					for e := ins.Back(); e != nil; e = e.Prev() {
 						if p, ok := e.Value.(sexp); ok {
 							exps = append(exps, p)
 						} else {
 							exps = append(exps, sexp{e.Value})
+							switch e.Value.(type) {
+							case float64:
+								constF++
+							case string:
+								constS++
+							}
 						}
 					}
-					tokens.PushBack(sexp{exps})
+					s := sexp{exps}
+					if constF > 0 && constF == len(exps) {
+						p := make([]float64, 0, constF)
+						for i := range exps {
+							p = append(p, exps[i].i.(float64))
+						}
+						s.i = p
+					} else if constS > 0 && constS == len(exps) {
+						p := make([]string, 0, constS)
+						for i := range exps {
+							p = append(p, exps[i].i.(string))
+						}
+						s.i = p
+					}
+					tokens.PushBack(s)
 					continue ss
 				}
 				ins.PushBack(e.Value)

@@ -7,7 +7,11 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/hashicorp/golang-lru/simplelru"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -112,7 +116,49 @@ const (
 	DefaultDateFormat = "2006-01-02"
 )
 
+type Cache struct {
+	mutex     sync.RWMutex
+	simpleLRU simplelru.LRUCache
+}
+
+var evalVerCache, evalInCache *Cache
+var vec *prometheus.CounterVec
+
+func initGlobalCache() {
+	cache, err := simplelru.NewLRU(100, func(key interface{}, value interface{}) {
+		if vec != nil {
+			vec.With(prometheus.Labels{"name": "ver"}).Inc()
+		}
+	})
+	if err != nil {
+		panic(err)
+	}
+	evalVerCache = &Cache{simpleLRU: cache}
+	cache, err = simplelru.NewLRU(200, func(key interface{}, value interface{}) {
+		if vec != nil {
+			vec.With(prometheus.Labels{"name": "in"}).Inc()
+		}
+	})
+	if err != nil {
+		panic(err)
+	}
+	evalInCache = &Cache{simpleLRU: cache}
+}
+
+func GetVerCache() *Cache {
+	return evalVerCache
+}
+
+func GetInCache() *Cache {
+	return evalInCache
+}
+
+func SetMetrics(instance *prometheus.CounterVec) {
+	vec = instance
+}
+
 func init() {
+	initGlobalCache()
 	MustRegist(FuncIn, In)
 	MustRegist(FuncOverlap, Overlap)
 	MustRegist(FuncBetween, Between)
@@ -239,7 +285,28 @@ func In(params ...interface{}) (interface{}, error) {
 
 	params = Uniform(params...)
 
+	c := GetInCache()
+	c.mutex.RLock()
+	t, ok := c.simpleLRU.Get(params[1])
+	c.mutex.RUnlock()
+	if ok {
+		if _, ok := t.(map[interface{}]struct{})[params[0]]; ok {
+			return true, nil
+		}
+		return false, nil
+	}
 	array := reflect.ValueOf(params[1])
+	if array.Len() >= 50 {
+		defer c.mutex.Unlock()
+		c.mutex.Lock()
+		if _, ok := c.simpleLRU.Get(params[1]); !ok {
+			m := make(map[interface{}]struct{})
+			for i := 0; i < array.Len(); i++ {
+				m[array.Index(i).Interface()] = struct{}{}
+			}
+			c.simpleLRU.Add(params[1], m)
+		}
+	}
 	for i := 0; i < array.Len(); i++ {
 		if params[0] == array.Index(i).Interface() {
 			return true, nil
@@ -487,9 +554,26 @@ func (f TypeVersion) eval(params ...interface{}) (interface{}, error) {
 			if !ok {
 				return nil, errors.New("t_version: param base type is not string")
 			}
-			t, err := f.convert(s)
-			if err != nil {
-				return nil, err
+			c := GetVerCache()
+			c.mutex.RLock()
+			t, ok := c.simpleLRU.Get(s)
+			c.mutex.RUnlock()
+			if !ok {
+				p := func() (interface{}, error) {
+					defer c.mutex.Unlock()
+					c.mutex.Lock()
+					var err error
+					t, err = f.convert(s)
+					if err != nil {
+						return nil, err
+					}
+					c.simpleLRU.Add(s, t)
+					return t, nil
+				}
+				t, err := p()
+				if err != nil {
+					return t, err
+				}
 			}
 			res[i] = t
 		}
@@ -641,6 +725,14 @@ func convertible(params ...interface{}) bool {
 func Uniform(params ...interface{}) []interface{} {
 	res := make([]interface{}, len(params))
 	for i, p := range params {
+		if _, ok := p.([]float64); ok {
+			res[i] = p
+			continue
+		}
+		if _, ok := p.([]string); ok {
+			res[i] = p
+			continue
+		}
 		if k := reflect.TypeOf(p).Kind(); k == reflect.Slice || k == reflect.Array {
 			v := reflect.ValueOf(p)
 			ps := make([]interface{}, v.Len())
@@ -654,6 +746,10 @@ func Uniform(params ...interface{}) []interface{} {
 				res[i] = t.String()
 			case reflect.Bool:
 				res[i] = t.Bool()
+			case reflect.Float64:
+				res[i] = t.Float()
+			case reflect.Int64:
+				res[i] = float64(t.Int())
 			default:
 				if n, err := toFloat64(p); err == nil {
 					res[i] = n
