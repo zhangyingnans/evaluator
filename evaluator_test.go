@@ -39,10 +39,6 @@ func ExampleExpression() {
 	// true
 }
 
-func TestBasic2(t *testing.T) {
-
-}
-
 func TestBasic(t *testing.T) {
 	params := MapParams{
 		"gender": "female",
