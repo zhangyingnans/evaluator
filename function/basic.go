@@ -266,26 +266,24 @@ func In(params ...interface{}) (interface{}, error) {
 	if l := len(params); l != 2 {
 		return false, fmt.Errorf("in: need two params, but got %d", l)
 	}
-	p1, ok1 := params[1].(map[string]struct{})
-	p2, ok2 := params[1].(map[float64]struct{})
-	if !ok1 && !ok2 {
-		if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
-			return false, errors.New("in: the second param must be an array")
-		}
-	}
-	if ok1 {
+	if p1, ok := params[1].(map[string]struct{}); ok {
 		p0 := Uniform2(params[0])
 		if p, ok := p0.(string); ok {
-			return p1[p], nil
+			_, e := p1[p]
+			return e, nil
 		}
 		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", p0, reflect.TypeOf(p0).Kind()))
 	}
-	if ok2 {
+	if p1, ok := params[1].(map[float64]struct{}); ok {
 		p0 := Uniform2(params[0])
 		if p, ok := p0.(float64); ok {
-			return p2[p], nil
+			_, e := p1[p]
+			return e, nil
 		}
-		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", params[0], reflect.TypeOf(params[0]).Kind()))
+		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", p0, reflect.TypeOf(p0).Kind()))
+	}
+	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
+		return false, errors.New("in: the second param must be an array")
 	}
 	params = Uniform(params...)
 	array := reflect.ValueOf(params[1])

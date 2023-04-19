@@ -107,8 +107,7 @@ func optimization(sexp sexp) bool {
 		}
 		for _, p := range l {
 			if ok := optimization(p); ok && len(l) == 3 {
-				f, ok := l[2].i.([]float64)
-				if ok {
+				if f, ok := l[2].i.([]float64); ok {
 					s := make(map[float64]struct{}, len(f))
 					for _, m := range f {
 						s[m] = struct{}{}
@@ -116,16 +115,15 @@ func optimization(sexp sexp) bool {
 					l[2].i = s
 					return false
 				}
-			}
-			fs, ok := l[2].i.([]string)
-			if ok {
-				s := make(map[string]struct{}, len(fs))
-				for _, m := range fs {
-					s[m] = struct{}{}
+				if fs, ok := l[2].i.([]string); ok {
+					s := make(map[string]struct{}, len(fs))
+					for _, m := range fs {
+						s[m] = struct{}{}
+					}
+					l[2].i = s
+					return false
 				}
-				l[2].i = s
 			}
-			return false
 		}
 	}
 	if val, ok := sexp.i.(varString); ok {
