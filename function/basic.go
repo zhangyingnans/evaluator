@@ -125,7 +125,7 @@ var evalVerCache *Cache
 var vec *prometheus.CounterVec
 
 func initGlobalCache() {
-	cache, err := simplelru.NewLRU(100, func(key interface{}, value interface{}) {
+	cache, err := simplelru.NewLRU(200, func(key interface{}, value interface{}) {
 		if vec != nil {
 			vec.With(prometheus.Labels{"name": "ver"}).Inc()
 		}
@@ -136,7 +136,7 @@ func initGlobalCache() {
 	evalVerCache = &Cache{simpleLRU: cache}
 }
 
-func GetVerCache() *Cache {
+func GetVCache() *Cache {
 	return evalVerCache
 }
 
@@ -272,7 +272,7 @@ func In(params ...interface{}) (interface{}, error) {
 			_, e := p1[p]
 			return e, nil
 		}
-		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", p0, reflect.TypeOf(p0).Kind()))
+		return false, errors.New(fmt.Sprintf("in: the first param type wrong with second:,%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
 	}
 	if p1, ok := params[1].(map[float64]struct{}); ok {
 		p0 := Uniform2(params[0])
@@ -280,7 +280,7 @@ func In(params ...interface{}) (interface{}, error) {
 			_, e := p1[p]
 			return e, nil
 		}
-		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", p0, reflect.TypeOf(p0).Kind()))
+		return false, errors.New(fmt.Sprintf("in: the first param type wrong with second:,%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
 	}
 	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
 		return false, errors.New("in: the second param must be an array")
@@ -534,20 +534,23 @@ func (f TypeVersion) eval(params ...interface{}) (interface{}, error) {
 			if !ok {
 				return nil, errors.New("t_version: param base type is not string")
 			}
-			c := GetVerCache()
+			c := GetVCache()
 			c.mutex.RLock()
-			t, ok := c.simpleLRU.Get(s)
+			t, ok := c.simpleLRU.Peek(s)
 			c.mutex.RUnlock()
 			if !ok {
 				p := func() (interface{}, error) {
 					defer c.mutex.Unlock()
 					c.mutex.Lock()
-					var err error
-					t, err = f.convert(s)
-					if err != nil {
-						return nil, err
+					t, ok = c.simpleLRU.Peek(s)
+					if !ok {
+						var err error
+						t, err = f.convert(s)
+						if err != nil {
+							return nil, err
+						}
+						c.simpleLRU.Add(s, t)
 					}
-					c.simpleLRU.Add(s, t)
 					return t, nil
 				}
 				t, err := p()
