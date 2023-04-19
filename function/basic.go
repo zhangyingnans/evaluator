@@ -285,7 +285,9 @@ func In(params ...interface{}) (interface{}, error) {
 	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
 		return false, errors.New("in: the second param must be an array")
 	}
+
 	params = Uniform(params...)
+
 	array := reflect.ValueOf(params[1])
 	for i := 0; i < array.Len(); i++ {
 		if params[0] == array.Index(i).Interface() {
