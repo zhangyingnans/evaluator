@@ -100,6 +100,43 @@ func (exp sexp) properties() []string {
 	return nil
 }
 
+func optimization(sexp sexp) bool {
+	if l, isList := sexp.i.(list); isList {
+		if len(l) == 0 {
+			return false
+		}
+		for _, p := range l {
+			if ok := optimization(p); ok && len(l) == 3 {
+				f, ok := l[2].i.([]float64)
+				if ok {
+					s := make(map[float64]struct{}, len(f))
+					for _, m := range f {
+						s[m] = struct{}{}
+					}
+					l[2].i = s
+					return false
+				}
+			}
+			fs, ok := l[2].i.([]string)
+			if ok {
+				s := make(map[string]struct{}, len(fs))
+				for _, m := range fs {
+					s[m] = struct{}{}
+				}
+				l[2].i = s
+			}
+			return false
+		}
+	}
+	if val, ok := sexp.i.(varString); ok {
+		s := string(val)
+		if _, err := function.Get(s); err == nil && (s == function.FuncIn || s == function.FuncOverlap) {
+			return true
+		}
+	}
+	return false
+}
+
 func parse(exp string) (sexp, error) {
 	data := []byte(exp)
 	tokens := queue.New()

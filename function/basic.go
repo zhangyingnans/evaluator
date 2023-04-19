@@ -121,7 +121,7 @@ type Cache struct {
 	simpleLRU simplelru.LRUCache
 }
 
-var evalVerCache, evalInCache *Cache
+var evalVerCache *Cache
 var vec *prometheus.CounterVec
 
 func initGlobalCache() {
@@ -134,23 +134,10 @@ func initGlobalCache() {
 		panic(err)
 	}
 	evalVerCache = &Cache{simpleLRU: cache}
-	cache, err = simplelru.NewLRU(200, func(key interface{}, value interface{}) {
-		if vec != nil {
-			vec.With(prometheus.Labels{"name": "in"}).Inc()
-		}
-	})
-	if err != nil {
-		panic(err)
-	}
-	evalInCache = &Cache{simpleLRU: cache}
 }
 
 func GetVerCache() *Cache {
 	return evalVerCache
-}
-
-func GetInCache() *Cache {
-	return evalInCache
 }
 
 func SetMetrics(instance *prometheus.CounterVec) {
@@ -279,34 +266,29 @@ func In(params ...interface{}) (interface{}, error) {
 	if l := len(params); l != 2 {
 		return false, fmt.Errorf("in: need two params, but got %d", l)
 	}
-	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
-		return false, errors.New("in: the second param must be an array")
+	p1, ok1 := params[1].(map[string]struct{})
+	p2, ok2 := params[1].(map[float64]struct{})
+	if !ok1 && !ok2 {
+		if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
+			return false, errors.New("in: the second param must be an array")
+		}
 	}
-
+	if ok1 {
+		p0 := Uniform2(params[0])
+		if p, ok := p0.(string); ok {
+			return p1[p], nil
+		}
+		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", p0, reflect.TypeOf(p0).Kind()))
+	}
+	if ok2 {
+		p0 := Uniform2(params[0])
+		if p, ok := p0.(float64); ok {
+			return p2[p], nil
+		}
+		return false, errors.New(fmt.Sprintf("cache in: the first param invalid:%+v,%+v", params[0], reflect.TypeOf(params[0]).Kind()))
+	}
 	params = Uniform(params...)
-
-	c := GetInCache()
-	c.mutex.RLock()
-	t, ok := c.simpleLRU.Get(params[1])
-	c.mutex.RUnlock()
-	if ok {
-		if _, ok := t.(map[interface{}]struct{})[params[0]]; ok {
-			return true, nil
-		}
-		return false, nil
-	}
 	array := reflect.ValueOf(params[1])
-	if array.Len() >= 50 {
-		defer c.mutex.Unlock()
-		c.mutex.Lock()
-		if _, ok := c.simpleLRU.Get(params[1]); !ok {
-			m := make(map[interface{}]struct{})
-			for i := 0; i < array.Len(); i++ {
-				m[array.Index(i).Interface()] = struct{}{}
-			}
-			c.simpleLRU.Add(params[1], m)
-		}
-	}
 	for i := 0; i < array.Len(); i++ {
 		if params[0] == array.Index(i).Interface() {
 			return true, nil
@@ -737,9 +719,9 @@ func Uniform(params ...interface{}) []interface{} {
 			v := reflect.ValueOf(p)
 			ps := make([]interface{}, v.Len())
 			for j := 0; j < v.Len(); j++ {
-				ps[j] = v.Index(j).Interface()
+				ps[j] = Uniform2(v.Index(j).Interface())
 			}
-			res[i] = Uniform(ps...)
+			res[i] = ps
 		} else {
 			switch t := reflect.ValueOf(p); t.Kind() {
 			case reflect.String:
@@ -760,4 +742,38 @@ func Uniform(params ...interface{}) []interface{} {
 		}
 	}
 	return res
+}
+
+func Uniform2(p interface{}) interface{} {
+	if _, ok := p.([]float64); ok {
+		return p
+	}
+	if _, ok := p.([]string); ok {
+		return p
+	}
+	if k := reflect.TypeOf(p).Kind(); k == reflect.Slice || k == reflect.Array {
+		v := reflect.ValueOf(p)
+		ps := make([]interface{}, v.Len())
+		for j := 0; j < v.Len(); j++ {
+			ps[j] = Uniform2(v.Index(j).Interface())
+		}
+		return ps
+	} else {
+		switch t := reflect.ValueOf(p); t.Kind() {
+		case reflect.String:
+			return t.String()
+		case reflect.Bool:
+			return t.Bool()
+		case reflect.Float64:
+			return t.Float()
+		case reflect.Int64:
+			return float64(t.Int())
+		default:
+			if n, err := toFloat64(p); err == nil {
+				return n
+			} else {
+				return p
+			}
+		}
+	}
 }

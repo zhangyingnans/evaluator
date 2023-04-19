@@ -21,6 +21,7 @@ func New(expr string) (Expression, error) {
 	if err != nil {
 		return Expression{}, err
 	}
+	optimization(exp)
 	return Expression{
 		exp: exp,
 	}, nil
