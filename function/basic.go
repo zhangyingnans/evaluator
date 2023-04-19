@@ -272,7 +272,7 @@ func In(params ...interface{}) (interface{}, error) {
 			_, e := p1[p]
 			return e, nil
 		}
-		return false, errors.New(fmt.Sprintf("in: the first param type wrong with second:,%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
+		return false, errors.New(fmt.Sprintf("in: the first param type mismatch with second.need:string,but:%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
 	}
 	if p1, ok := params[1].(map[float64]struct{}); ok {
 		p0 := Uniform2(params[0])
@@ -280,7 +280,7 @@ func In(params ...interface{}) (interface{}, error) {
 			_, e := p1[p]
 			return e, nil
 		}
-		return false, errors.New(fmt.Sprintf("in: the first param type wrong with second:,%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
+		return false, errors.New(fmt.Sprintf("in: the first param type mismatch with second.need:float64,but:%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
 	}
 	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
 		return false, errors.New("in: the second param must be an array")
