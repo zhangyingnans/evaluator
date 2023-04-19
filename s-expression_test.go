@@ -28,9 +28,11 @@ func TestFscan(t *testing.T) {
 		{`(a b) c`, ErrLeftOverText},
 		{`(a b) ( c d )`, ErrLeftOverText},
 		{`'(' "(" "\"(\"" a b c)`, ErrUnmatchedParenthesis},
+		{`(and (and (in var1 ( 12  20  23 )) (in var2 ( 12  20  23 )) (and (not (overlap var3 ( 4  5  6 ))) (overlap ( 4  5  6 ) ( 7  8  9 )))) (overlap ( 1  2  3 ) ( 4  5  6 )))`, nil},
 	}
 	for _, input := range inputs {
-		_, err := parse(input.exp)
+		s, err := parse(input.exp)
+		optimization(s)
 		if err != input.err {
 			t.Errorf("wanna: %v, got: %v", input.err, err)
 		}

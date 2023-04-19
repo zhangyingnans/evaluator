@@ -63,7 +63,12 @@ func (exp sexp) evaluate(ps Params) (interface{}, error) {
 		}
 		return params, nil
 	}
-
+	if _, ok := exp.i.([]float64); ok {
+		return exp.i, nil
+	}
+	if _, ok := exp.i.([]string); ok {
+		return exp.i, nil
+	}
 	if val, ok := exp.i.(varString); ok {
 		s := string(val)
 		if fn, err := function.Get(s); err == nil {
@@ -95,6 +100,41 @@ func (exp sexp) properties() []string {
 	return nil
 }
 
+func optimization(sexp sexp) bool {
+	if l, isList := sexp.i.(list); isList {
+		if len(l) == 0 {
+			return false
+		}
+		for _, p := range l {
+			if ok := optimization(p); ok && len(l) == 3 {
+				if f, ok := l[2].i.([]float64); ok {
+					s := make(map[float64]struct{}, len(f))
+					for _, m := range f {
+						s[m] = struct{}{}
+					}
+					l[2].i = s
+					return false
+				}
+				if fs, ok := l[2].i.([]string); ok {
+					s := make(map[string]struct{}, len(fs))
+					for _, m := range fs {
+						s[m] = struct{}{}
+					}
+					l[2].i = s
+					return false
+				}
+			}
+		}
+	}
+	if val, ok := sexp.i.(varString); ok {
+		s := string(val)
+		if _, err := function.Get(s); err == nil && (s == function.FuncIn || s == function.FuncOverlap) {
+			return true
+		}
+	}
+	return false
+}
+
 func parse(exp string) (sexp, error) {
 	data := []byte(exp)
 	tokens := queue.New()
@@ -111,14 +151,35 @@ ss:
 				tokens.Remove(e)
 				if v, ok := e.Value.(byte); ok && v == '(' {
 					exps := make(list, 0, ins.Len())
+					var constF, constS int
 					for e := ins.Back(); e != nil; e = e.Prev() {
 						if p, ok := e.Value.(sexp); ok {
 							exps = append(exps, p)
 						} else {
 							exps = append(exps, sexp{e.Value})
+							switch e.Value.(type) {
+							case float64:
+								constF++
+							case string:
+								constS++
+							}
 						}
 					}
-					tokens.PushBack(sexp{exps})
+					s := sexp{exps}
+					if constF > 0 && constF == len(exps) {
+						p := make([]float64, 0, constF)
+						for i := range exps {
+							p = append(p, exps[i].i.(float64))
+						}
+						s.i = p
+					} else if constS > 0 && constS == len(exps) {
+						p := make([]string, 0, constS)
+						for i := range exps {
+							p = append(p, exps[i].i.(string))
+						}
+						s.i = p
+					}
+					tokens.PushBack(s)
 					continue ss
 				}
 				ins.PushBack(e.Value)

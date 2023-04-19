@@ -7,7 +7,11 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/hashicorp/golang-lru/simplelru"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -112,7 +116,36 @@ const (
 	DefaultDateFormat = "2006-01-02"
 )
 
+type Cache struct {
+	mutex     sync.RWMutex
+	simpleLRU simplelru.LRUCache
+}
+
+var evalVerCache *Cache
+var vec *prometheus.CounterVec
+
+func initGlobalCache() {
+	cache, err := simplelru.NewLRU(200, func(key interface{}, value interface{}) {
+		if vec != nil {
+			vec.With(prometheus.Labels{"name": "ver"}).Inc()
+		}
+	})
+	if err != nil {
+		panic(err)
+	}
+	evalVerCache = &Cache{simpleLRU: cache}
+}
+
+func GetVCache() *Cache {
+	return evalVerCache
+}
+
+func SetMetrics(instance *prometheus.CounterVec) {
+	vec = instance
+}
+
 func init() {
+	initGlobalCache()
 	MustRegist(FuncIn, In)
 	MustRegist(FuncOverlap, Overlap)
 	MustRegist(FuncBetween, Between)
@@ -232,6 +265,22 @@ func NotEqual(params ...interface{}) (res interface{}, err error) {
 func In(params ...interface{}) (interface{}, error) {
 	if l := len(params); l != 2 {
 		return false, fmt.Errorf("in: need two params, but got %d", l)
+	}
+	if p1, ok := params[1].(map[string]struct{}); ok {
+		p0 := Uniform2(params[0])
+		if p, ok := p0.(string); ok {
+			_, e := p1[p]
+			return e, nil
+		}
+		return false, errors.New(fmt.Sprintf("in: the first param type mismatch with second.need:string,but:%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
+	}
+	if p1, ok := params[1].(map[float64]struct{}); ok {
+		p0 := Uniform2(params[0])
+		if p, ok := p0.(float64); ok {
+			_, e := p1[p]
+			return e, nil
+		}
+		return false, errors.New(fmt.Sprintf("in: the first param type mismatch with second.need:float64,but:%+v,%+v", reflect.TypeOf(p0).Kind(), params[1]))
 	}
 	if k := reflect.TypeOf(params[1]).Kind(); k != reflect.Slice && k != reflect.Array {
 		return false, errors.New("in: the second param must be an array")
@@ -487,9 +536,29 @@ func (f TypeVersion) eval(params ...interface{}) (interface{}, error) {
 			if !ok {
 				return nil, errors.New("t_version: param base type is not string")
 			}
-			t, err := f.convert(s)
-			if err != nil {
-				return nil, err
+			c := GetVCache()
+			c.mutex.RLock()
+			t, ok := c.simpleLRU.Peek(s)
+			c.mutex.RUnlock()
+			if !ok {
+				p := func() (interface{}, error) {
+					defer c.mutex.Unlock()
+					c.mutex.Lock()
+					t, ok = c.simpleLRU.Peek(s)
+					if !ok {
+						var err error
+						t, err = f.convert(s)
+						if err != nil {
+							return nil, err
+						}
+						c.simpleLRU.Add(s, t)
+					}
+					return t, nil
+				}
+				t, err := p()
+				if err != nil {
+					return t, err
+				}
 			}
 			res[i] = t
 		}
@@ -641,19 +710,31 @@ func convertible(params ...interface{}) bool {
 func Uniform(params ...interface{}) []interface{} {
 	res := make([]interface{}, len(params))
 	for i, p := range params {
+		if _, ok := p.([]float64); ok {
+			res[i] = p
+			continue
+		}
+		if _, ok := p.([]string); ok {
+			res[i] = p
+			continue
+		}
 		if k := reflect.TypeOf(p).Kind(); k == reflect.Slice || k == reflect.Array {
 			v := reflect.ValueOf(p)
 			ps := make([]interface{}, v.Len())
 			for j := 0; j < v.Len(); j++ {
-				ps[j] = v.Index(j).Interface()
+				ps[j] = Uniform2(v.Index(j).Interface())
 			}
-			res[i] = Uniform(ps...)
+			res[i] = ps
 		} else {
 			switch t := reflect.ValueOf(p); t.Kind() {
 			case reflect.String:
 				res[i] = t.String()
 			case reflect.Bool:
 				res[i] = t.Bool()
+			case reflect.Float64:
+				res[i] = t.Float()
+			case reflect.Int64:
+				res[i] = float64(t.Int())
 			default:
 				if n, err := toFloat64(p); err == nil {
 					res[i] = n
@@ -664,4 +745,38 @@ func Uniform(params ...interface{}) []interface{} {
 		}
 	}
 	return res
+}
+
+func Uniform2(p interface{}) interface{} {
+	if _, ok := p.([]float64); ok {
+		return p
+	}
+	if _, ok := p.([]string); ok {
+		return p
+	}
+	if k := reflect.TypeOf(p).Kind(); k == reflect.Slice || k == reflect.Array {
+		v := reflect.ValueOf(p)
+		ps := make([]interface{}, v.Len())
+		for j := 0; j < v.Len(); j++ {
+			ps[j] = Uniform2(v.Index(j).Interface())
+		}
+		return ps
+	} else {
+		switch t := reflect.ValueOf(p); t.Kind() {
+		case reflect.String:
+			return t.String()
+		case reflect.Bool:
+			return t.Bool()
+		case reflect.Float64:
+			return t.Float()
+		case reflect.Int64:
+			return float64(t.Int())
+		default:
+			if n, err := toFloat64(p); err == nil {
+				return n
+			} else {
+				return p
+			}
+		}
+	}
 }
