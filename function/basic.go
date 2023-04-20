@@ -127,7 +127,8 @@ var vec *prometheus.CounterVec
 func initGlobalCache() {
 	cache, err := simplelru.NewLRU(200, func(key interface{}, value interface{}) {
 		if vec != nil {
-			vec.With(prometheus.Labels{"name": "ver"}).Inc()
+			ver, _ := key.(string)
+			vec.With(prometheus.Labels{"version": ver}).Inc()
 		}
 	})
 	if err != nil {
