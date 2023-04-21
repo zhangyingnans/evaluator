@@ -122,9 +122,14 @@ type Cache struct {
 }
 
 var evalVerCache *Cache
-var vec *prometheus.CounterVec
 
 func initGlobalCache() {
+	vec := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "tantan",
+		Name:      "eval_cache_c",
+		Help:      "oms eval_cache" + " (counters)",
+	}, []string{"version"})
+	prometheus.MustRegister(vec)
 	cache, err := simplelru.NewLRU(200, func(key interface{}, value interface{}) {
 		if vec != nil {
 			version, _ := key.(string)
@@ -137,12 +142,8 @@ func initGlobalCache() {
 	evalVerCache = &Cache{simpleLRU: cache}
 }
 
-func GetVCache() *Cache {
+func getVCache() *Cache {
 	return evalVerCache
-}
-
-func SetMetrics(instance *prometheus.CounterVec) {
-	vec = instance
 }
 
 func init() {
@@ -537,7 +538,7 @@ func (f TypeVersion) eval(params ...interface{}) (interface{}, error) {
 			if !ok {
 				return nil, errors.New("t_version: param base type is not string")
 			}
-			c := GetVCache()
+			c := getVCache()
 			c.mutex.RLock()
 			t, ok := c.simpleLRU.Peek(s)
 			c.mutex.RUnlock()
